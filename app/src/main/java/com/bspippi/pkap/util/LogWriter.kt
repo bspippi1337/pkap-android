@@ -15,18 +15,27 @@ class LogWriter(private val context: Context) {
     }
 
     private val sessionLog: File by lazy {
-        File(logsDirectory, "CredentialDump-Session.log")
+        File(logsDirectory, "PKap-Session.log")
     }
 
     private val written = ConcurrentHashMap.newKeySet<String>()
-
     private val dateFmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
 
-    fun write(cred: Credential) {
-        val key = "${cred.type}|${cred.hashcatLine}"
+    /**
+     * Automatic persistence is sanitized by default. Raw material is only written when
+     * includeSecrets=true is passed by an explicit user action.
+     */
+    fun write(cred: Credential, includeSecrets: Boolean = false) {
+        val dedupValue = if (includeSecrets) cred.hashcatLine else cred.safeSummary
+        val key = "${cred.type}|$dedupValue"
         if (!written.add(key)) return
 
-        val line = "[${dateFmt.format(Date(cred.timestamp))}] ${cred.type} ${cred.source}\n${cred.hashcatLine}\n"
+        val persisted = if (includeSecrets) cred.hashcatLine else cred.redactedHashcatLine
+        val line = buildString {
+            append('[').append(dateFmt.format(Date(cred.timestamp))).append("] ")
+            append(cred.safeSummary).append('\n')
+            if (persisted.isNotBlank()) append(persisted).append('\n')
+        }
         sessionLog.appendText(line)
 
         val filename = when (cred.type) {
@@ -45,7 +54,7 @@ class LogWriter(private val context: Context) {
             CredType.CREDIT_CARD -> "CreditCards.txt"
             else -> "Other.txt"
         }
-        File(logsDirectory, filename).appendText(cred.hashcatLine + "\n")
+        File(logsDirectory, filename).appendText((persisted.ifBlank { "[redacted]" }) + "\n")
     }
 
     fun getLogsDir(): File = logsDirectory
