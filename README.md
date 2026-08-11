@@ -1,52 +1,16 @@
-# PKap – Native Android Pcredz
+# PKap // BLCKSWAN BT
 
-**Native Kotlin + Jetpack Compose port of Pcredz with full auto root mode.**
+Bluetooth/toolkit variant based on the uploaded `pkapbt.zip`, patched for Android 15 build reliability.
 
-Extracts NTLMv1/v2, HTTP Basic, FTP, SMTP/IMAP/POP, SNMP, HTTP form fields and credit cards from live traffic or PCAPs.
+Changes in this branch include:
+- BT permission flow waits for user approval before scan/connect actions.
+- Android 12+ uses `BLUETOOTH_CONNECT` + `BLUETOOTH_SCAN` without unnecessary location permission in the runtime request.
+- Root capture tracks and terminates only its own tcpdump PID, including after rotation.
+- `MANAGE_EXTERNAL_STORAGE` removed; app backup disabled; cleartext traffic disabled.
+- Gradle wrapper quoting fixed.
+- Version bumped to `1.1.0-blckswan-bt` (`versionCode 2`).
+- UI branded `PKAP // BLCKSWAN BT`.
 
-## Modes
+The complete patched source is stored in `variants/PKap-BLCKSWAN-BT-ci-source.zip`. GitHub Actions extracts that source into the runner and builds the debug APK from it.
 
-| Mode | Root? | Description |
-|------|-------|-------------|
-| **VPN** | No | Local VpnService capture (works everywhere) |
-| **ROOT AUTO** | Yes | `su` + tcpdump on **all interfaces**, continuous crawl, live CSV |
-| **PCAP** | No | Offline classic PCAP analysis |
-
-## Auto Root Crawl
-
-- Detects root + tcpdump (Magisk module / busybox / system)
-- Captures on `any` interface
-- Continuously parses and deduplicates credentials
-- Writes **live CSV** + classic hashcat log files
-- Auto-rotates pcap when > 50 MB
-
-## Pretty CSV
-
-Columns:
-
-```
-timestamp,type,protocol,username,domain,secret,hashcat_line,source
-```
-
-Proper quoting, one file per export + continuous `pkap_live.csv` while in auto mode.
-
-Location: `Android/data/com.bspippi.pkap/files/exports/`
-
-## Build
-
-Open in Android Studio → Build → Generate Signed APK  
-or
-
-```bash
-./gradlew assembleRelease
-```
-
-minSdk 26, targetSdk 35.
-
-## Notes
-
-- Requires `tcpdump` on device for ROOT AUTO (install via Magisk tcpdump module or copy binary to `/data/local/tmp`)
-- No full TCP reassembly (same limitation as original Pcredz)
-- Kerberos extractor still minimal – structure is there for later ASN.1 work
-
-**blckswan · 1337**
+Use Bluetooth controls only with devices you own or are authorized to manage.
