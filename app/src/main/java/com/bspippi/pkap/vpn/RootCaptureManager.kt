@@ -12,10 +12,8 @@ import java.io.FileInputStream
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Full auto root mode.
- * Uses su + tcpdump (if present) to capture on all interfaces,
- * writes rotating pcaps, and continuously feeds the extractor.
- * Falls back gracefully if tcpdump is missing.
+ * Local root capture for owned/authorized traffic.
+ * Uses su + tcpdump when available, writes rotating PCAPs, and feeds the local parser.
  */
 class RootCaptureManager(
     private val context: Context,
@@ -24,12 +22,16 @@ class RootCaptureManager(
 ) {
     companion object {
         private const val TAG = "PKapRootCapture"
+        private const val ROTATE_BYTES = 50L * 1024L * 1024L
+        private const val POLL_MS = 1500L
     }
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val running = AtomicBoolean(false)
     private var captureJob: Job? = null
-    private var tcpdumpProcess: Process? = null
+
+    @Volatile
+    private var activePid: Int? = null
 
     private val extractor = CredentialExtractor(onCredential = onCredential, enableCc = true)
     private val pcapDir: File by lazy {
@@ -47,86 +49,92 @@ class RootCaptureManager(
 
         val tcpdump = RootUtils.whichTcpdump()
         if (tcpdump == null) {
-            onStatus("tcpdump not found – install via Magisk module or busybox")
+            onStatus("tcpdump not found · install a trusted local build")
             running.set(false)
             return
         }
 
         val ifaces = RootUtils.listInterfaces()
-        onStatus("Root auto · ifaces: ${ifaces.joinToString()} · $tcpdump")
+        onStatus("Root sensor · ${ifaces.joinToString()} · local only")
 
         captureJob = scope.launch {
-            // Strategy: tcpdump -i any -w rotating files, parser tails them
-            // Simpler reliable approach for Android: dump to a single growing pcap and parse increments,
-            // or use -U (packet buffered) to stdout and feed a live parser.
-            // Many Magisk tcpdumps support -w - 
-
             val pcapFile = File(pcapDir, "live_capture.pcap")
             if (pcapFile.exists()) pcapFile.delete()
 
-            // Start tcpdump in background via su
-            // -i any   : all interfaces
-            // -U       : packet-buffered (flush every packet)
-            // -s 0     : full packets
-            // -w file  : write pcap
-            val cmd = "$tcpdump -i any -U -s 0 -w ${pcapFile.absolutePath} >/dev/null 2>&1 & echo \$!"
-            val pidStr = RootUtils.su(cmd, timeoutSec = 5)?.trim()?.lines()?.lastOrNull()
-            val pid = pidStr?.toIntOrNull()
+            fun startTcpdump(): Int? {
+                val cmd = "$tcpdump -i any -U -s 0 -w ${shellQuote(pcapFile.absolutePath)} >/dev/null 2>&1 & echo \$!"
+                return RootUtils.su(cmd, timeoutSec = 5)
+                    ?.trim()
+                    ?.lines()
+                    ?.lastOrNull()
+                    ?.toIntOrNull()
+                    ?.also { activePid = it }
+            }
 
+            fun stopTcpdump() {
+                val pid = activePid ?: return
+                RootUtils.su("kill $pid 2>/dev/null")
+                activePid = null
+            }
+
+            var pid = startTcpdump()
             if (pid == null) {
                 onStatus("Failed to start tcpdump as root")
                 running.set(false)
                 return@launch
             }
 
-            onStatus("Root capture running (pid $pid) · auto crawl active")
+            onStatus("Root sensor active · pid $pid · redacted persistence")
 
-            // Poll the growing pcap and parse new data
             var lastSize = 0L
-            val parser = PcapParser(extractor) { count, _ ->
-                // progress ignored in live
-            }
+            val parser = PcapParser(extractor)
 
-            while (isActive && running.get()) {
-                delay(1500) // crawl interval
-                try {
-                    if (!pcapFile.exists()) continue
-                    val size = pcapFile.length()
-                    if (size > lastSize && size > 24) {
-                        // Re-parse whole file for simplicity (dedup is inside extractor)
-                        // For very long sessions a proper offset parser would be better
-                        FileInputStream(pcapFile).use { fis ->
-                            // skip if still writing header only
-                            if (size > 40) {
+            try {
+                while (isActive && running.get()) {
+                    delay(POLL_MS)
+
+                    try {
+                        if (!pcapFile.exists()) continue
+                        val size = pcapFile.length()
+
+                        if (size > lastSize && size > 40) {
+                            FileInputStream(pcapFile).use { fis ->
                                 parser.parseStream(fis, "root-live")
                             }
+                            lastSize = size
+                            onStatus("Root sensor · ${size / 1024} KB · local analysis")
                         }
-                        lastSize = size
-                        onStatus("Root auto · ${size / 1024} KB captured · hunting…")
-                    }
 
-                    // Rotate if huge (> 50 MB) to keep memory sane
-                    if (size > 50 * 1024 * 1024) {
-                        RootUtils.su("kill $pid")
-                        val rotated = File(pcapDir, "capture_${System.currentTimeMillis()}.pcap")
-                        pcapFile.renameTo(rotated)
-                        // restart tcpdump
-                        val newPid = RootUtils.su(
-                            "$tcpdump -i any -U -s 0 -w ${pcapFile.absolutePath} >/dev/null 2>&1 & echo \$!"
-                        )?.trim()?.lines()?.lastOrNull()?.toIntOrNull()
-                        if (newPid != null) {
-                            lastSize = 0
-                            onStatus("Rotated pcap · new pid $newPid")
-                        } else break
+                        if (size > ROTATE_BYTES) {
+                            stopTcpdump()
+
+                            val rotated = File(
+                                pcapDir,
+                                "capture_${System.currentTimeMillis()}.pcap"
+                            )
+                            if (!pcapFile.renameTo(rotated)) {
+                                onStatus("Rotation failed · keeping current capture")
+                            }
+
+                            pid = startTcpdump()
+                            if (pid == null) {
+                                onStatus("Rotation restart failed")
+                                break
+                            }
+
+                            lastSize = 0L
+                            onStatus("Rotated PCAP · new pid $pid")
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Poll error: ${e.message}")
                     }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Poll error: ${e.message}")
                 }
+            } finally {
+                stopTcpdump()
+                activePid = null
+                running.set(false)
+                onStatus("Root sensor stopped")
             }
-
-            // cleanup
-            pid.let { RootUtils.su("kill $it 2>/dev/null") }
-            onStatus("Root capture stopped")
         }
     }
 
@@ -134,12 +142,20 @@ class RootCaptureManager(
         running.set(false)
         captureJob?.cancel()
         captureJob = null
-        try {
-            RootUtils.su("pkill -f tcpdump 2>/dev/null")
-        } catch (_: Exception) {}
+
+        // Kill only the tcpdump process created by this manager. Never pkill every tcpdump.
+        activePid?.let { pid ->
+            try {
+                RootUtils.su("kill $pid 2>/dev/null")
+            } catch (_: Exception) {}
+        }
+        activePid = null
         extractor.clearState()
-        onStatus("Root capture stopped")
+        onStatus("Root sensor stopped")
     }
 
     fun isRunning(): Boolean = running.get()
+
+    private fun shellQuote(value: String): String =
+        "'" + value.replace("'", "'\\''") + "'"
 }
