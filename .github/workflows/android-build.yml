@@ -2,18 +2,29 @@ name: PKap Android APK
 
 on:
   push:
-    branches: ["master"]
+    branches:
+      - master
+      - 'blckswan/**'
+  pull_request:
+    branches:
+      - master
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: pkap-android-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
@@ -34,11 +45,22 @@ jobs:
           gradle-version: '8.10.2'
 
       - name: Build debug APK
-        run: gradle --no-daemon :app:assembleDebug --stacktrace
+        shell: bash
+        run: |
+          chmod +x gradlew
+          ./gradlew --version
+          ./gradlew --no-daemon :app:assembleDebug --stacktrace
+
+      - name: Create SHA-256 checksum
+        shell: bash
+        run: sha256sum app/build/outputs/apk/debug/app-debug.apk > app/build/outputs/apk/debug/app-debug.apk.sha256
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: PKap-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/debug/app-debug.apk.sha256
           if-no-files-found: error
+          retention-days: 30
