@@ -1,6 +1,10 @@
 package com.bspippi.pkap.ui
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateDp
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -55,13 +59,16 @@ fun MainScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text(
-                            "PKAP // BLCKSWAN",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 20.sp,
-                            color = NeonGreen,
-                            fontFamily = FontFamily.Monospace
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "PKAP // ",
+                                fontWeight = FontWeight.Black,
+                                fontSize = 18.sp,
+                                color = TextPrimary,
+                                fontFamily = FontFamily.Monospace
+                            )
+                            GlitchBrand()
+                        }
                         Text(
                             when {
                                 state.isRootMode -> "NODE42 · ROOT SENSOR"
@@ -111,6 +118,8 @@ fun MainScreen(
                 .padding(padding)
                 .padding(horizontal = 14.dp)
         ) {
+            GlitchRail()
+            Spacer(Modifier.height(7.dp))
             SecurityBanner(state.revealSecrets)
             Spacer(Modifier.height(8.dp))
             StatusStrip(state)
@@ -131,6 +140,95 @@ fun MainScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun GlitchBrand() {
+    val loop = rememberInfiniteTransition(label = "blckswan-glitch")
+    val shift by loop.animateDp(
+        initialValue = 0.dp,
+        targetValue = 2.dp,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 115),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "chroma-shift"
+    )
+
+    Box {
+        Text(
+            "BLCKSWAN",
+            modifier = Modifier.offset(x = (-1).dp, y = shift),
+            color = NeonPink.copy(alpha = 0.45f),
+            fontWeight = FontWeight.Black,
+            fontSize = 18.sp,
+            letterSpacing = 1.sp,
+            fontFamily = FontFamily.Monospace
+        )
+        Text(
+            "BLCKSWAN",
+            modifier = Modifier.offset(x = shift, y = (-1).dp),
+            color = NeonCyan.copy(alpha = 0.45f),
+            fontWeight = FontWeight.Black,
+            fontSize = 18.sp,
+            letterSpacing = 1.sp,
+            fontFamily = FontFamily.Monospace
+        )
+        Text(
+            "BLCKSWAN",
+            color = NeonGreen,
+            fontWeight = FontWeight.Black,
+            fontSize = 18.sp,
+            letterSpacing = 1.sp,
+            fontFamily = FontFamily.Monospace
+        )
+    }
+}
+
+@Composable
+private fun GlitchRail() {
+    val loop = rememberInfiniteTransition(label = "glitch-rail")
+    val slice by loop.animateDp(
+        initialValue = 6.dp,
+        targetValue = 34.dp,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 820),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "slice"
+    )
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(42.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color(0xFF080810))
+            .border(1.dp, NeonCyan.copy(alpha = 0.18f), RoundedCornerShape(8.dp))
+    ) {
+        Text(
+            "╔══ BLCKSWAN AUTO-GLITCH ══╗",
+            color = NeonCyan.copy(alpha = 0.75f),
+            fontFamily = FontFamily.Monospace,
+            fontSize = 10.sp,
+            modifier = Modifier.align(Alignment.Center).offset(x = (-1).dp)
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .offset(y = slice)
+                .background(NeonPink.copy(alpha = 0.55f))
+        )
+        Box(
+            modifier = Modifier
+                .width(78.dp)
+                .height(3.dp)
+                .align(Alignment.CenterEnd)
+                .offset(x = (-8).dp, y = 9.dp)
+                .background(NeonGreen.copy(alpha = 0.35f))
+        )
     }
 }
 
@@ -371,9 +469,7 @@ private fun BottomBar(
     onPick: () -> Unit
 ) {
     Surface(color = CardBg, tonalElevation = 8.dp, shadowElevation = 12.dp) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(12.dp).navigationBarsPadding()
-        ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(12.dp).navigationBarsPadding()) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
