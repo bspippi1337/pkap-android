@@ -41,7 +41,8 @@ fun MainScreen(
     onClear: () -> Unit,
     onFilter: (String) -> Unit,
     onExportCsv: () -> Unit,
-    onOpenLogs: () -> Unit
+    onOpenLogs: () -> Unit,
+    onToggleReveal: () -> Unit
 ) {
     val filtered = remember(state.credentials, state.selectedFilter) {
         if (state.selectedFilter == "ALL") state.credentials
@@ -55,25 +56,32 @@ fun MainScreen(
                 title = {
                     Column {
                         Text(
-                            "PKap",
+                            "PKAP // BLCKSWAN",
                             fontWeight = FontWeight.Black,
-                            fontSize = 22.sp,
+                            fontSize = 20.sp,
                             color = NeonGreen,
                             fontFamily = FontFamily.Monospace
                         )
                         Text(
                             when {
-                                state.isRootMode -> "root · auto crawl"
-                                state.isCapturing -> "vpn · live"
-                                else -> "native · blckswan"
+                                state.isRootMode -> "NODE42 · ROOT SENSOR"
+                                state.isCapturing -> "NODE42 · VPN LAB"
+                                else -> "RESTLESS · LOCAL ANALYSIS"
                             },
-                            fontSize = 11.sp,
+                            fontSize = 10.sp,
                             color = if (state.isRootMode) NeonPink else TextMuted,
                             fontFamily = FontFamily.Monospace
                         )
                     }
                 },
                 actions = {
+                    IconButton(onClick = onToggleReveal) {
+                        Icon(
+                            if (state.revealSecrets) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                            contentDescription = if (state.revealSecrets) "Redact" else "Reveal",
+                            tint = if (state.revealSecrets) NeonPink else NeonCyan
+                        )
+                    }
                     IconButton(onClick = onExportCsv) {
                         Icon(Icons.Default.TableChart, contentDescription = "Export CSV", tint = NeonCyan)
                     }
@@ -84,10 +92,7 @@ fun MainScreen(
                         Icon(Icons.Default.DeleteSweep, contentDescription = "Clear", tint = NeonPink)
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = DeepBlack,
-                    titleContentColor = NeonGreen
-                )
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = DeepBlack)
             )
         },
         bottomBar = {
@@ -104,8 +109,10 @@ fun MainScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(horizontal = 12.dp)
+                .padding(horizontal = 14.dp)
         ) {
+            SecurityBanner(state.revealSecrets)
+            Spacer(Modifier.height(8.dp))
             StatusStrip(state)
             Spacer(Modifier.height(8.dp))
             FilterRow(state.selectedFilter, onFilter)
@@ -119,11 +126,40 @@ fun MainScreen(
                     contentPadding = PaddingValues(bottom = 16.dp)
                 ) {
                     items(filtered, key = { it.id }) { cred ->
-                        CredentialCard(cred)
+                        CredentialCard(cred, state.revealSecrets)
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SecurityBanner(revealSecrets: Boolean) {
+    val color = if (revealSecrets) NeonPink else NeonGreen
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(color.copy(alpha = 0.08f))
+            .border(1.dp, color.copy(alpha = 0.35f), RoundedCornerShape(10.dp))
+            .padding(horizontal = 11.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            if (revealSecrets) Icons.Default.Warning else Icons.Default.Shield,
+            contentDescription = null,
+            tint = color,
+            modifier = Modifier.size(16.dp)
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            if (revealSecrets) "RAW VIEW · manual exports include secrets" else "PRIVACY MODE · persistence is redacted",
+            color = color,
+            fontSize = 10.sp,
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.Bold
+        )
     }
 }
 
@@ -135,11 +171,11 @@ private fun StatusStrip(state: UiState) {
             state.isCapturing -> Color(0xFF003322)
             else -> CardBg
         },
-        tween(400), label = "statusBg"
+        tween(350), label = "statusBg"
     )
     val borderCol = when {
-        state.isRootMode -> NeonPink.copy(0.5f)
-        state.isCapturing -> NeonGreen.copy(0.4f)
+        state.isRootMode -> NeonPink.copy(alpha = 0.5f)
+        state.isCapturing -> NeonGreen.copy(alpha = 0.4f)
         else -> Color(0xFF2A2A3A)
     }
 
@@ -176,19 +212,19 @@ private fun StatusStrip(state: UiState) {
                 overflow = TextOverflow.Ellipsis
             )
             if (state.packetCount > 0) {
-                Text("${state.packetCount} packets", color = TextMuted, fontSize = 11.sp)
-            }
-            if (state.lastCsvPath != null) {
-                Text("CSV ready", color = NeonCyan, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                Text("${state.packetCount} packets", color = TextMuted, fontSize = 10.sp)
             }
         }
-        Text(
-            "${state.credentials.size}",
-            color = if (state.isRootMode) NeonPink else NeonGreen,
-            fontWeight = FontWeight.Bold,
-            fontSize = 18.sp,
-            fontFamily = FontFamily.Monospace
-        )
+        Column(horizontalAlignment = Alignment.End) {
+            Text(
+                "${state.credentials.size}",
+                color = if (state.isRootMode) NeonPink else NeonGreen,
+                fontWeight = FontWeight.Black,
+                fontSize = 20.sp,
+                fontFamily = FontFamily.Monospace
+            )
+            Text("findings", color = TextMuted, fontSize = 9.sp, fontFamily = FontFamily.Monospace)
+        }
     }
 }
 
@@ -197,18 +233,15 @@ private fun FilterRow(selected: String, onFilter: (String) -> Unit) {
     val filters = listOf("ALL", "NTLMv1", "NTLMv2", "HTTP_BASIC", "FTP", "SNMP", "HTTP_FORM", "CREDIT_CARD")
     Row(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
     ) {
         filters.forEach { f ->
-            val active = f == selected
             FilterChip(
-                selected = active,
+                selected = f == selected,
                 onClick = { onFilter(f) },
-                label = { Text(f, fontSize = 11.sp, fontFamily = FontFamily.Monospace) },
+                label = { Text(f, fontSize = 10.sp, fontFamily = FontFamily.Monospace) },
                 colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = NeonGreen.copy(0.2f),
+                    selectedContainerColor = NeonGreen.copy(alpha = 0.2f),
                     selectedLabelColor = NeonGreen,
                     containerColor = SurfaceVariant,
                     labelColor = TextMuted
@@ -219,7 +252,7 @@ private fun FilterRow(selected: String, onFilter: (String) -> Unit) {
 }
 
 @Composable
-private fun CredentialCard(cred: Credential) {
+private fun CredentialCard(cred: Credential, revealSecrets: Boolean) {
     val clipboard = LocalClipboardManager.current
     val accent = when (cred.type) {
         CredType.NTLMv1, CredType.NTLMv2 -> NeonPink
@@ -229,11 +262,11 @@ private fun CredentialCard(cred: Credential) {
         CredType.CREDIT_CARD -> Color(0xFFFF5555)
         else -> TextMuted
     }
+    val shownSecret = if (revealSecrets) cred.shortSecret else cred.redactedSecret
+    val copyText = if (revealSecrets) cred.hashcatLine else cred.safeSummary
 
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { clipboard.setText(AnnotatedString(cred.hashcatLine)) },
+        modifier = Modifier.fillMaxWidth().clickable { clipboard.setText(AnnotatedString(copyText)) },
         colors = CardDefaults.cardColors(containerColor = CardBg),
         shape = RoundedCornerShape(12.dp)
     ) {
@@ -242,7 +275,7 @@ private fun CredentialCard(cred: Credential) {
                 Box(
                     modifier = Modifier
                         .width(4.dp)
-                        .height(28.dp)
+                        .height(30.dp)
                         .clip(RoundedCornerShape(2.dp))
                         .background(accent)
                 )
@@ -259,21 +292,16 @@ private fun CredentialCard(cred: Credential) {
                     Text(
                         "${cred.type} · ${cred.protocol}",
                         color = accent,
-                        fontSize = 11.sp,
+                        fontSize = 10.sp,
                         fontFamily = FontFamily.Monospace
                     )
                 }
-                Icon(
-                    Icons.Default.ContentCopy,
-                    contentDescription = "Copy",
-                    tint = TextMuted,
-                    modifier = Modifier.size(18.dp)
-                )
+                Icon(Icons.Default.ContentCopy, contentDescription = "Copy", tint = TextMuted, modifier = Modifier.size(17.dp))
             }
             Spacer(Modifier.height(8.dp))
             Text(
-                cred.shortSecret,
-                color = TextMuted,
+                shownSecret,
+                color = if (revealSecrets) TextPrimary else TextMuted,
                 fontSize = 12.sp,
                 fontFamily = FontFamily.Monospace,
                 maxLines = 2,
@@ -283,8 +311,8 @@ private fun CredentialCard(cred: Credential) {
                 Spacer(Modifier.height(4.dp))
                 Text(
                     cred.source,
-                    color = TextMuted.copy(0.7f),
-                    fontSize = 10.sp,
+                    color = TextMuted.copy(alpha = 0.7f),
+                    fontSize = 9.sp,
                     fontFamily = FontFamily.Monospace,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -298,11 +326,18 @@ private fun CredentialCard(cred: Credential) {
 private fun EmptyState(busy: Boolean, rootMode: Boolean) {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(
+                if (rootMode) Icons.Default.Security else Icons.Default.Radar,
+                contentDescription = null,
+                tint = if (rootMode) NeonPink else NeonGreen,
+                modifier = Modifier.size(44.dp)
+            )
+            Spacer(Modifier.height(10.dp))
             Text(
                 when {
-                    rootMode -> "ROOT AUTO CRAWL"
-                    busy -> "HUNTING…"
-                    else -> "NO CREDENTIALS YET"
+                    rootMode -> "ROOT SENSOR ACTIVE"
+                    busy -> "ANALYZING…"
+                    else -> "READY"
                 },
                 color = when {
                     rootMode -> NeonPink
@@ -310,18 +345,18 @@ private fun EmptyState(busy: Boolean, rootMode: Boolean) {
                     else -> TextMuted
                 },
                 fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.Black,
                 fontSize = 16.sp
             )
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(6.dp))
             Text(
                 when {
-                    rootMode -> "Scanning all interfaces · writing live CSV"
-                    busy -> "Packets flowing"
-                    else -> "LIVE · ROOT AUTO · or open a PCAP"
+                    rootMode -> "Local capture · redacted persistence"
+                    busy -> "Packets flowing locally"
+                    else -> "VPN LAB · ROOT SENSOR · PCAP"
                 },
                 color = TextMuted,
-                fontSize = 13.sp
+                fontSize = 12.sp
             )
         }
     }
@@ -337,29 +372,18 @@ private fun BottomBar(
 ) {
     Surface(color = CardBg, tonalElevation = 8.dp, shadowElevation = 12.dp) {
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp)
-                .navigationBarsPadding()
+            modifier = Modifier.fillMaxWidth().padding(12.dp).navigationBarsPadding()
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // VPN Live
                 Button(
-                    onClick = {
-                        if (state.isCapturing) onStopAll() else onStartVpn()
-                    },
+                    onClick = { if (state.isCapturing && !state.isRootMode) onStopAll() else onStartVpn() },
                     enabled = !state.isParsing,
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(48.dp),
+                    modifier = Modifier.weight(1f).height(48.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = when {
-                            state.isCapturing && !state.isRootMode -> NeonPink
-                            else -> NeonGreen
-                        },
+                        containerColor = if (state.isCapturing && !state.isRootMode) NeonPink else NeonGreen,
                         contentColor = DeepBlack
                     ),
                     shape = RoundedCornerShape(12.dp)
@@ -370,23 +394,13 @@ private fun BottomBar(
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(Modifier.width(4.dp))
-                    Text(
-                        if (state.isCapturing && !state.isRootMode) "STOP" else "VPN",
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 13.sp
-                    )
+                    Text(if (state.isCapturing && !state.isRootMode) "STOP" else "VPN", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
                 }
 
-                // Root Auto
                 Button(
-                    onClick = {
-                        if (state.isRootMode) onStopAll() else onStartRootAuto()
-                    },
+                    onClick = { if (state.isRootMode) onStopAll() else onStartRootAuto() },
                     enabled = state.rootAvailable && !state.isParsing,
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(48.dp),
+                    modifier = Modifier.weight(1f).height(48.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = if (state.isRootMode) NeonPink else Color(0xFF3A0018),
                         contentColor = if (state.isRootMode) DeepBlack else NeonPink,
@@ -395,42 +409,30 @@ private fun BottomBar(
                     ),
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Icon(
-                        if (state.isRootMode) Icons.Default.Stop else Icons.Default.Security,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
+                    Icon(if (state.isRootMode) Icons.Default.Stop else Icons.Default.Security, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text(
-                        if (state.isRootMode) "STOP" else "ROOT",
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 13.sp
-                    )
+                    Text(if (state.isRootMode) "STOP" else "ROOT", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
                 }
 
-                // PCAP
                 OutlinedButton(
                     onClick = onPick,
                     enabled = !state.isCapturing && !state.isParsing,
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(48.dp),
+                    modifier = Modifier.weight(1f).height(48.dp),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = NeonCyan),
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("PCAP", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, fontSize = 13.sp)
+                    Text("PCAP", fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
                 }
             }
 
             if (!state.rootAvailable) {
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "Root not detected – ROOT AUTO disabled",
+                    "ROOT SENSOR unavailable · PCAP/VPN still ready",
                     color = TextMuted,
-                    fontSize = 10.sp,
+                    fontSize = 9.sp,
                     fontFamily = FontFamily.Monospace,
                     modifier = Modifier.align(Alignment.CenterHorizontally)
                 )
