@@ -13,15 +13,19 @@ object CsvExporter {
     private val fileFmt = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
 
     /**
-     * Pretty CSV with proper quoting.
+     * CSV export is redacted unless the caller explicitly requests local secret export.
      * Columns: timestamp, type, protocol, username, domain, secret, hashcat_line, source
      */
-    fun export(context: Context, credentials: List<Credential>): File {
+    fun export(
+        context: Context,
+        credentials: List<Credential>,
+        includeSecrets: Boolean = false
+    ): File {
         val dir = File(context.getExternalFilesDir(null), "exports").also { it.mkdirs() }
-        val file = File(dir, "pkap_credentials_${fileFmt.format(Date())}.csv")
+        val suffix = if (includeSecrets) "raw" else "redacted"
+        val file = File(dir, "pkap_${suffix}_${fileFmt.format(Date())}.csv")
 
         file.bufferedWriter().use { w ->
-            // header
             w.write("timestamp,type,protocol,username,domain,secret,hashcat_line,source\n")
 
             credentials.forEach { c ->
@@ -32,8 +36,8 @@ object CsvExporter {
                     c.protocol,
                     c.username,
                     c.domain,
-                    c.secret,
-                    c.hashcatLine,
+                    if (includeSecrets) c.secret else c.redactedSecret,
+                    if (includeSecrets) c.hashcatLine else c.redactedHashcatLine,
                     c.source
                 ).joinToString(",") { escape(it) }
                 w.write(line)
@@ -43,7 +47,10 @@ object CsvExporter {
         return file
     }
 
-    /** Also write a live-updating CSV that Auto mode can keep open. */
+    /**
+     * Continuous root-mode CSV is always sanitized. Raw exports require an explicit
+     * foreground user action so background capture never leaves plaintext secrets behind.
+     */
     fun appendLive(context: Context, cred: Credential, liveFile: File) {
         if (!liveFile.exists()) {
             liveFile.parentFile?.mkdirs()
@@ -56,8 +63,8 @@ object CsvExporter {
             cred.protocol,
             cred.username,
             cred.domain,
-            cred.secret,
-            cred.hashcatLine,
+            cred.redactedSecret,
+            cred.redactedHashcatLine,
             cred.source
         ).joinToString(",") { escape(it) }
         liveFile.appendText(line + "\n")

@@ -59,17 +59,10 @@ class MainActivity : ComponentActivity() {
                     state = state,
                     onStartVpn = {
                         val prepare = vm.prepareVpn()
-                        if (prepare != null) {
-                            vpnPermission.launch(prepare)
-                        } else {
-                            vm.startVpn()
-                        }
+                        if (prepare != null) vpnPermission.launch(prepare) else vm.startVpn()
                     },
                     onStopAll = { vm.stopAll() },
-                    onStartRootAuto = {
-                        vm.startRootAuto()
-                        Toast.makeText(this@MainActivity, "Root auto crawl started", Toast.LENGTH_SHORT).show()
-                    },
+                    onStartRootAuto = { vm.startRootAuto() },
                     onPickPcap = {
                         pcapPicker.launch(
                             arrayOf(
@@ -86,23 +79,17 @@ class MainActivity : ComponentActivity() {
                     onExportCsv = {
                         val file = vm.exportCsv()
                         if (file != null) {
-                            Toast.makeText(
-                                this@MainActivity,
-                                "CSV: ${file.absolutePath}",
-                                Toast.LENGTH_LONG
-                            ).show()
-                        } else {
-                            Toast.makeText(this@MainActivity, "Nothing to export", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(this@MainActivity, "CSV: ${file.absolutePath}", Toast.LENGTH_LONG).show()
                         }
                     },
                     onOpenLogs = {
-                        val dir = vm.getLogsDir()
                         Toast.makeText(
                             this@MainActivity,
-                            "Logs: ${dir.absolutePath}\nExports: ${vm.getExportsDir().absolutePath}",
+                            "Logs: ${vm.getLogsDir().absolutePath}\nExports: ${vm.getExportsDir().absolutePath}",
                             Toast.LENGTH_LONG
                         ).show()
-                    }
+                    },
+                    onToggleReveal = { vm.toggleRevealSecrets() }
                 )
             }
         }

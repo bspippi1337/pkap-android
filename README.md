@@ -1,52 +1,62 @@
-# PKap – Native Android Pcredz
+# PKap // BLCKSWAN
 
-**Native Kotlin + Jetpack Compose port of Pcredz with full auto root mode.**
+**Native Kotlin + Jetpack Compose packet-analysis toolkit for Android.**
 
-Extracts NTLMv1/v2, HTTP Basic, FTP, SMTP/IMAP/POP, SNMP, HTTP form fields and credit cards from live traffic or PCAPs.
+PKap is designed for **local, authorized analysis** of traffic you own or are permitted to inspect. It supports offline PCAP analysis, a rooted local sensor using `tcpdump`, and an experimental Android VPN lab mode.
+
+## BLCKSWAN Edition
+
+- Dark terminal-style Compose UI
+- Privacy mode enabled by default
+- Automatic logs and live CSV are redacted
+- Explicit reveal toggle for local inspection
+- Manual raw CSV export only while reveal mode is enabled
+- ROOT capture kills only its own `tcpdump` PID
+- Correct PID tracking after PCAP rotation
+- CI builds debug APKs for master, PRs, and `agent/**` branches
 
 ## Modes
 
-| Mode | Root? | Description |
-|------|-------|-------------|
-| **VPN** | No | Local VpnService capture (works everywhere) |
-| **ROOT AUTO** | Yes | `su` + tcpdump on **all interfaces**, continuous crawl, live CSV |
-| **PCAP** | No | Offline classic PCAP analysis |
+| Mode | Root | Status |
+|---|---:|---|
+| **PCAP** | No | Offline classic-PCAP analysis |
+| **ROOT SENSOR** | Yes | Local `su` + `tcpdump` capture on owned/authorized interfaces |
+| **VPN LAB** | No | Experimental packet observation via `VpnService`; not a transparent forwarding VPN |
 
-## Auto Root Crawl
+## Privacy model
 
-- Detects root + tcpdump (Magisk module / busybox / system)
-- Captures on `any` interface
-- Continuously parses and deduplicates credentials
-- Writes **live CSV** + classic hashcat log files
-- Auto-rotates pcap when > 50 MB
+PKap keeps detected material in memory for the active session, but automatic persistence is sanitized:
 
-## Pretty CSV
+- `PKap-Session.log` stores metadata + redacted markers
+- `pkap_live_redacted.csv` never stores plaintext secrets
+- normal CSV export is redacted
+- enabling **RAW VIEW** allows an explicit local raw export
 
-Columns:
-
-```
-timestamp,type,protocol,username,domain,secret,hashcat_line,source
-```
-
-Proper quoting, one file per export + continuous `pkap_live.csv` while in auto mode.
-
-Location: `Android/data/com.bspippi.pkap/files/exports/`
+Treat any raw export as sensitive data.
 
 ## Build
 
-Open in Android Studio → Build → Generate Signed APK  
-or
-
 ```bash
-./gradlew assembleRelease
+gradle --no-daemon :app:assembleDebug
 ```
 
-minSdk 26, targetSdk 35.
+GitHub Actions publishes the APK as `PKap-BLCKSWAN-debug-apk`.
+
+- minSdk 26
+- targetSdk 35
+- Java 17
+- Gradle 8.10.2
+
+## ROOT SENSOR requirements
+
+A trusted `tcpdump` must be available through Magisk, BusyBox, system paths, or `/data/local/tmp`.
+
+PKap intentionally tracks and terminates **only the capture PID it started**; it does not use a global `pkill tcpdump` shutdown.
 
 ## Notes
 
-- Requires `tcpdump` on device for ROOT AUTO (install via Magisk tcpdump module or copy binary to `/data/local/tmp`)
-- No full TCP reassembly (same limitation as original Pcredz)
-- Kerberos extractor still minimal – structure is there for later ASN.1 work
+- TCP stream reassembly is still limited.
+- IPv6 parsing remains partial/future work.
+- VPN LAB currently observes TUN packets but does not implement a full user-space TCP/IP forwarder.
 
-**blckswan · 1337**
+**BLCKSWAN · RESTLESS · NODE42**
