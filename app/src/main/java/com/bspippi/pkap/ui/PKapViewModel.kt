@@ -3,8 +3,6 @@ package com.bspippi.pkap.ui
 import android.app.Application
 import android.content.Intent
 import android.net.Uri
-import android.net.VpnService
-import android.widget.Toast
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.bspippi.pkap.extractor.CredentialExtractor
@@ -29,6 +27,7 @@ data class UiState(
     val isAutoMode: Boolean = false,
     val isParsing: Boolean = false,
     val rootAvailable: Boolean = false,
+    val vpnAvailable: Boolean = false,
     val status: String = "Ready",
     val packetCount: Int = 0,
     val selectedFilter: String = "ALL",
@@ -53,61 +52,81 @@ class PKapViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         val hasRoot = RootUtils.isRootAvailable()
-        _state.update { it.copy(rootAvailable = hasRoot, status = if (hasRoot) "Root ready · auto available" else "Ready (no root)") }
+        _state.update {
+            it.copy(
+                rootAvailable = hasRoot,
+                vpnAvailable = false,
+                status = if (hasRoot) {
+                    "Root ready · ROOT + PCAP available"
+                } else {
+                    "Ready · PCAP available"
+                }
+            )
+        }
 
         PKapVpnService.onCredentialFound = { cred -> handleNewCredential(cred) }
         PKapVpnService.onStatus = { msg ->
-            _state.update { it.copy(status = msg, isCapturing = PKapVpnService.isRunning) }
+            _state.update {
+                it.copy(
+                    status = msg,
+                    isCapturing = PKapVpnService.isRunning,
+                    isRootMode = false,
+                    isAutoMode = false
+                )
+            }
         }
     }
 
     private fun handleNewCredential(cred: Credential) {
         logWriter.write(cred)
-        // Always append to live CSV when in auto / root mode
+
         if (_state.value.isAutoMode || _state.value.isRootMode) {
             try {
                 CsvExporter.appendLive(getApplication(), cred, liveCsvFile)
-            } catch (_: Exception) {}
+            } catch (_: Exception) {
+            }
         }
-        _state.update { s ->
-            s.copy(credentials = listOf(cred) + s.credentials)
+
+        _state.update { state ->
+            state.copy(credentials = listOf(cred) + state.credentials)
         }
     }
 
-    fun prepareVpn(): Intent? = VpnService.prepare(getApplication())
+    /**
+     * VPN mode is intentionally parked until a real bidirectional forwarding
+     * backend exists. Returning null avoids asking the user for VPN permission
+     * for a mode that cannot safely forward packets yet.
+     */
+    fun prepareVpn(): Intent? = null
 
     fun startVpn() {
-        stopRoot() // exclusive
-        val ctx = getApplication<Application>()
-        val intent = Intent(ctx, PKapVpnService::class.java).apply {
-            action = PKapVpnService.ACTION_START
-        }
-        ctx.startForegroundService(intent)
         _state.update {
             it.copy(
-                isCapturing = true,
+                isCapturing = false,
                 isRootMode = false,
                 isAutoMode = false,
-                status = "VPN live capture…"
+                status = "VPN live is parked — use ROOT or PCAP (no traffic blackhole)"
             )
         }
     }
 
     fun stopVpn() {
-        val ctx = getApplication<Application>()
-        val intent = Intent(ctx, PKapVpnService::class.java).apply {
-            action = PKapVpnService.ACTION_STOP
+        val context = getApplication<Application>()
+        context.stopService(Intent(context, PKapVpnService::class.java))
+        _state.update {
+            it.copy(
+                isCapturing = false,
+                status = if (it.isRootMode) it.status else "Stopped"
+            )
         }
-        ctx.startService(intent)
-        _state.update { it.copy(isCapturing = false, status = "Stopped") }
     }
 
-    /** Full auto root mode – crawls all interfaces continuously */
     fun startRootAuto() {
         if (!_state.value.rootAvailable) {
             _state.update { it.copy(status = "Root not available") }
             return
         }
+
         stopVpn()
         stopRoot()
 
@@ -115,24 +134,27 @@ class PKapViewModel(app: Application) : AndroidViewModel(app) {
             context = getApplication(),
             onCredential = { handleNewCredential(it) },
             onStatus = { msg ->
+                val active = rootCapture?.isRunning() == true
                 _state.update {
                     it.copy(
                         status = msg,
-                        isCapturing = true,
-                        isRootMode = true,
-                        isAutoMode = true
+                        isCapturing = active,
+                        isRootMode = active,
+                        isAutoMode = active
                     )
                 }
             }
         )
+
         rootCapture = manager
-        manager.start(autoMode = true)
+        manager.start()
+
         _state.update {
             it.copy(
-                isCapturing = true,
-                isRootMode = true,
-                isAutoMode = true,
-                status = "Root auto crawl starting…"
+                isCapturing = manager.isRunning(),
+                isRootMode = manager.isRunning(),
+                isAutoMode = manager.isRunning(),
+                status = "Root capture starting…"
             )
         }
     }
@@ -158,22 +180,34 @@ class PKapViewModel(app: Application) : AndroidViewModel(app) {
     fun parsePcap(uri: Uri) {
         viewModelScope.launch {
             _state.update { it.copy(isParsing = true, status = "Parsing PCAP…") }
+
             try {
-                val ctx = getApplication<Application>()
-                ctx.contentResolver.openInputStream(uri)?.use { input ->
+                val context = getApplication<Application>()
+                context.contentResolver.openInputStream(uri)?.use { input ->
                     val parser = PcapParser(extractor) { current, _ ->
-                        _state.update { it.copy(packetCount = current, status = "Parsed $current packets") }
+                        _state.update {
+                            it.copy(
+                                packetCount = current,
+                                status = "Parsed $current packets"
+                            )
+                        }
                     }
                     parser.parseStream(input, uri.lastPathSegment ?: "pcap")
                 }
+
                 _state.update {
                     it.copy(
                         isParsing = false,
-                        status = "Done – ${it.credentials.size} credentials"
+                        status = "Done — ${it.credentials.size} findings"
                     )
                 }
             } catch (e: Exception) {
-                _state.update { it.copy(isParsing = false, status = "Error: ${e.message}") }
+                _state.update {
+                    it.copy(
+                        isParsing = false,
+                        status = "Error: ${e.message}"
+                    )
+                }
             }
         }
     }
@@ -181,9 +215,15 @@ class PKapViewModel(app: Application) : AndroidViewModel(app) {
     fun exportCsv(): File? {
         val creds = _state.value.credentials
         if (creds.isEmpty()) return null
+
         return try {
             val file = CsvExporter.export(getApplication(), creds)
-            _state.update { it.copy(lastCsvPath = file.absolutePath, status = "CSV exported: ${file.name}") }
+            _state.update {
+                it.copy(
+                    lastCsvPath = file.absolutePath,
+                    status = "CSV exported: ${file.name}"
+                )
+            }
             file
         } catch (e: Exception) {
             _state.update { it.copy(status = "CSV export failed: ${e.message}") }
@@ -192,12 +232,20 @@ class PKapViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun clearCredentials() {
-        _state.update { it.copy(credentials = emptyList(), packetCount = 0, status = "Cleared", lastCsvPath = null) }
+        _state.update {
+            it.copy(
+                credentials = emptyList(),
+                packetCount = 0,
+                status = "Cleared",
+                lastCsvPath = null
+            )
+        }
         extractor.clearState()
         logWriter.clearSession()
         try {
             if (liveCsvFile.exists()) liveCsvFile.delete()
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+        }
     }
 
     fun setFilter(filter: String) {
@@ -207,7 +255,9 @@ class PKapViewModel(app: Application) : AndroidViewModel(app) {
     fun getLogsDir(): File = logWriter.getLogsDir()
 
     fun getExportsDir(): File =
-        File(getApplication<Application>().getExternalFilesDir(null), "exports").also { it.mkdirs() }
+        File(getApplication<Application>().getExternalFilesDir(null), "exports").also {
+            it.mkdirs()
+        }
 
     override fun onCleared() {
         stopAll()
