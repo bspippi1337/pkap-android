@@ -2,6 +2,10 @@ name: PKap Android APK
 
 on:
   push:
+    branches:
+      - master
+      - 'agent/**'
+  pull_request:
     branches: ["master"]
   workflow_dispatch:
 
@@ -39,6 +43,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: PKap-debug-apk
+          name: PKap-BLCKSWAN-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+          retention-days: 30
