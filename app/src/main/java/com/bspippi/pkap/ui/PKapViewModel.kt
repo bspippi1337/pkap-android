@@ -6,6 +6,7 @@ import android.net.Uri
 import android.net.VpnService
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.bspippi.pkap.bluetooth.BluetoothControl
 import com.bspippi.pkap.extractor.CredentialExtractor
 import com.bspippi.pkap.model.Credential
 import com.bspippi.pkap.parser.PcapParser
@@ -32,7 +33,11 @@ data class UiState(
     val status: String = "Ready · local only · redacted",
     val packetCount: Int = 0,
     val selectedFilter: String = "ALL",
-    val lastCsvPath: String? = null
+    val lastCsvPath: String? = null,
+    val btDevices: List<BluetoothControl.Device> = emptyList(),
+    val btBusy: Boolean = false,
+    val btEnabled: Boolean = false,
+    val btMessage: String = "BT idle"
 )
 
 class PKapViewModel(app: Application) : AndroidViewModel(app) {
@@ -44,11 +49,8 @@ class PKapViewModel(app: Application) : AndroidViewModel(app) {
     private val liveCsvFile: File by lazy {
         File(app.getExternalFilesDir(null), "exports/pkap_live_redacted.csv")
     }
-
-    private val extractor = CredentialExtractor(
-        onCredential = { cred -> handleNewCredential(cred) }
-    )
-
+    private val extractor = CredentialExtractor(onCredential = { handleNewCredential(it) })
+    private val bluetooth = BluetoothControl(app)
     private var rootCapture: RootCaptureManager? = null
 
     init {
@@ -56,28 +58,20 @@ class PKapViewModel(app: Application) : AndroidViewModel(app) {
         _state.update {
             it.copy(
                 rootAvailable = hasRoot,
-                status = if (hasRoot) {
-                    "Root ready · local only · redacted"
-                } else {
-                    "Ready · no root · PCAP available"
-                }
+                btEnabled = bluetooth.isEnabled(),
+                status = if (hasRoot) "Root ready · local only · redacted" else "Ready · no root · PCAP available"
             )
         }
-
-        PKapVpnService.onCredentialFound = { cred -> handleNewCredential(cred) }
+        PKapVpnService.onCredentialFound = { handleNewCredential(it) }
         PKapVpnService.onStatus = { msg ->
             _state.update { it.copy(status = msg, isCapturing = PKapVpnService.isRunning) }
         }
     }
 
     private fun handleNewCredential(cred: Credential) {
-        // Background persistence is intentionally sanitized. Raw values stay memory-only
-        // unless the user explicitly enables reveal and performs a manual export.
         logWriter.write(cred, includeSecrets = false)
         if (_state.value.isAutoMode || _state.value.isRootMode) {
-            try {
-                CsvExporter.appendLive(getApplication(), cred, liveCsvFile)
-            } catch (_: Exception) {}
+            try { CsvExporter.appendLive(getApplication(), cred, liveCsvFile) } catch (_: Exception) {}
         }
         _state.update { s -> s.copy(credentials = listOf(cred) + s.credentials) }
     }
@@ -87,27 +81,14 @@ class PKapViewModel(app: Application) : AndroidViewModel(app) {
     fun startVpn() {
         stopRoot()
         val ctx = getApplication<Application>()
-        val intent = Intent(ctx, PKapVpnService::class.java).apply {
-            action = PKapVpnService.ACTION_START
-        }
-        ctx.startForegroundService(intent)
-        _state.update {
-            it.copy(
-                isCapturing = true,
-                isRootMode = false,
-                isAutoMode = false,
-                status = "VPN lab starting…"
-            )
-        }
+        ctx.startForegroundService(Intent(ctx, PKapVpnService::class.java).apply { action = PKapVpnService.ACTION_START })
+        _state.update { it.copy(isCapturing = true, isRootMode = false, isAutoMode = false, status = "VPN lab starting…") }
     }
 
     fun stopVpn() {
         if (!PKapVpnService.isRunning) return
         val ctx = getApplication<Application>()
-        val intent = Intent(ctx, PKapVpnService::class.java).apply {
-            action = PKapVpnService.ACTION_STOP
-        }
-        ctx.startService(intent)
+        ctx.startService(Intent(ctx, PKapVpnService::class.java).apply { action = PKapVpnService.ACTION_STOP })
         _state.update { it.copy(isCapturing = false, status = "Stopped · local data retained") }
     }
 
@@ -116,52 +97,23 @@ class PKapViewModel(app: Application) : AndroidViewModel(app) {
             _state.update { it.copy(status = "Root not available") }
             return
         }
-        stopVpn()
-        stopRoot()
-
+        stopVpn(); stopRoot()
         val manager = RootCaptureManager(
             context = getApplication(),
             onCredential = { handleNewCredential(it) },
-            onStatus = { msg ->
-                _state.update {
-                    it.copy(
-                        status = msg,
-                        isCapturing = true,
-                        isRootMode = true,
-                        isAutoMode = true
-                    )
-                }
-            }
+            onStatus = { msg -> _state.update { it.copy(status = msg, isCapturing = true, isRootMode = true, isAutoMode = true) } }
         )
         rootCapture = manager
         manager.start(autoMode = true)
-        _state.update {
-            it.copy(
-                isCapturing = true,
-                isRootMode = true,
-                isAutoMode = true,
-                status = "Root capture starting · redacted persistence"
-            )
-        }
+        _state.update { it.copy(isCapturing = true, isRootMode = true, isAutoMode = true, status = "Root capture starting · redacted persistence") }
     }
 
     fun stopRoot() {
-        rootCapture?.stop()
-        rootCapture = null
-        _state.update {
-            it.copy(
-                isCapturing = false,
-                isRootMode = false,
-                isAutoMode = false,
-                status = "Root capture stopped"
-            )
-        }
+        rootCapture?.stop(); rootCapture = null
+        _state.update { it.copy(isCapturing = false, isRootMode = false, isAutoMode = false, status = "Root capture stopped") }
     }
 
-    fun stopAll() {
-        stopVpn()
-        stopRoot()
-    }
+    fun stopAll() { stopVpn(); stopRoot() }
 
     fun parsePcap(uri: Uri) {
         viewModelScope.launch {
@@ -169,17 +121,11 @@ class PKapViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val ctx = getApplication<Application>()
                 ctx.contentResolver.openInputStream(uri)?.use { input ->
-                    val parser = PcapParser(extractor) { current, _ ->
+                    PcapParser(extractor) { current, _ ->
                         _state.update { it.copy(packetCount = current, status = "Parsed $current packets") }
-                    }
-                    parser.parseStream(input, uri.lastPathSegment ?: "pcap")
+                    }.parseStream(input, uri.lastPathSegment ?: "pcap")
                 }
-                _state.update {
-                    it.copy(
-                        isParsing = false,
-                        status = "Done · ${it.credentials.size} findings · local only"
-                    )
-                }
+                _state.update { it.copy(isParsing = false, status = "Done · ${it.credentials.size} findings · local only") }
             } catch (e: Exception) {
                 _state.update { it.copy(isParsing = false, status = "PCAP error: ${e.message}") }
             }
@@ -190,18 +136,9 @@ class PKapViewModel(app: Application) : AndroidViewModel(app) {
         val creds = _state.value.credentials
         if (creds.isEmpty()) return null
         return try {
-            val includeSecrets = _state.value.revealSecrets
-            val file = CsvExporter.export(getApplication(), creds, includeSecrets = includeSecrets)
-            _state.update {
-                it.copy(
-                    lastCsvPath = file.absolutePath,
-                    status = if (includeSecrets) {
-                        "Raw local CSV exported · protect this file"
-                    } else {
-                        "Redacted CSV exported"
-                    }
-                )
-            }
+            val raw = _state.value.revealSecrets
+            val file = CsvExporter.export(getApplication(), creds, includeSecrets = raw)
+            _state.update { it.copy(lastCsvPath = file.absolutePath, status = if (raw) "Raw local CSV exported · protect this file" else "Redacted CSV exported") }
             file
         } catch (e: Exception) {
             _state.update { it.copy(status = "CSV export failed: ${e.message}") }
@@ -212,45 +149,58 @@ class PKapViewModel(app: Application) : AndroidViewModel(app) {
     fun toggleRevealSecrets() {
         _state.update {
             val reveal = !it.revealSecrets
-            it.copy(
-                revealSecrets = reveal,
-                status = if (reveal) {
-                    "Reveal enabled · memory only until manual export"
-                } else {
-                    "Redaction enabled · local only"
-                }
-            )
+            it.copy(revealSecrets = reveal, status = if (reveal) "Reveal enabled · memory only until manual export" else "Redaction enabled · local only")
         }
     }
 
     fun clearCredentials() {
-        _state.update {
-            it.copy(
-                credentials = emptyList(),
-                packetCount = 0,
-                status = "Cleared",
-                lastCsvPath = null,
-                revealSecrets = false
-            )
-        }
-        extractor.clearState()
-        logWriter.clearSession()
-        try {
-            if (liveCsvFile.exists()) liveCsvFile.delete()
-        } catch (_: Exception) {}
+        _state.update { it.copy(credentials = emptyList(), packetCount = 0, status = "Cleared", lastCsvPath = null, revealSecrets = false) }
+        extractor.clearState(); logWriter.clearSession()
+        try { if (liveCsvFile.exists()) liveCsvFile.delete() } catch (_: Exception) {}
     }
 
-    fun setFilter(filter: String) {
-        _state.update { it.copy(selectedFilter = filter) }
-    }
-
+    fun setFilter(filter: String) { _state.update { it.copy(selectedFilter = filter) } }
     fun getLogsDir(): File = logWriter.getLogsDir()
+    fun getExportsDir(): File = File(getApplication<Application>().getExternalFilesDir(null), "exports").also { it.mkdirs() }
 
-    fun getExportsDir(): File =
-        File(getApplication<Application>().getExternalFilesDir(null), "exports").also { it.mkdirs() }
+    fun btRequiredPermissions(): Array<String> = bluetooth.requiredPermissions()
+
+    fun refreshBluetooth() {
+        bluetooth.bind()
+        val devices = bluetooth.bondedDevices()
+        _state.update { it.copy(btDevices = devices, btEnabled = bluetooth.isEnabled(), btMessage = if (devices.isEmpty()) "No bonded BT devices" else "${devices.size} bonded device(s)") }
+    }
+
+    fun scanBluetooth() {
+        if (_state.value.btBusy) return
+        viewModelScope.launch {
+            _state.update { it.copy(btBusy = true, btMessage = "Scanning Bluetooth…") }
+            try {
+                val devices = bluetooth.scan()
+                _state.update { it.copy(btBusy = false, btEnabled = bluetooth.isEnabled(), btDevices = devices, btMessage = "Found ${devices.size} device(s)") }
+            } catch (e: Exception) {
+                _state.update { it.copy(btBusy = false, btMessage = "BT scan error: ${e.message}") }
+            }
+        }
+    }
+
+    fun switchBluetooth(address: String) {
+        if (_state.value.btBusy) return
+        viewModelScope.launch {
+            _state.update { it.copy(btBusy = true, btMessage = "Switching A2DP…") }
+            val msg = bluetooth.switchToBonded(address)
+            val devices = bluetooth.bondedDevices()
+            _state.update { it.copy(btBusy = false, btDevices = devices, btMessage = msg) }
+        }
+    }
+
+    fun disconnectBluetooth() {
+        val msg = bluetooth.disconnectAudio()
+        _state.update { it.copy(btMessage = msg, btDevices = bluetooth.bondedDevices()) }
+    }
 
     override fun onCleared() {
-        stopAll()
+        stopAll(); bluetooth.close()
         PKapVpnService.onCredentialFound = null
         PKapVpnService.onStatus = null
         super.onCleared()
