@@ -10,12 +10,12 @@ import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 
 class LogWriter(private val context: Context) {
-    private val logsDir: File by lazy {
+    private val logsDirectory: File by lazy {
         File(context.getExternalFilesDir(null), "logs").also { it.mkdirs() }
     }
 
     private val sessionLog: File by lazy {
-        File(logsDir, "CredentialDump-Session.log")
+        File(logsDirectory, "CredentialDump-Session.log")
     }
 
     private val written = ConcurrentHashMap.newKeySet<String>()
@@ -26,11 +26,9 @@ class LogWriter(private val context: Context) {
         val key = "${cred.type}|${cred.hashcatLine}"
         if (!written.add(key)) return
 
-        // Session log
         val line = "[${dateFmt.format(Date(cred.timestamp))}] ${cred.type} ${cred.source}\n${cred.hashcatLine}\n"
         sessionLog.appendText(line)
 
-        // Type-specific files (hashcat ready)
         val filename = when (cred.type) {
             CredType.NTLMv1 -> "NTLMv1.txt"
             CredType.NTLMv2 -> "NTLMv2.txt"
@@ -47,13 +45,12 @@ class LogWriter(private val context: Context) {
             CredType.CREDIT_CARD -> "CreditCards.txt"
             else -> "Other.txt"
         }
-        File(logsDir, filename).appendText(cred.hashcatLine + "\n")
+        File(logsDirectory, filename).appendText(cred.hashcatLine + "\n")
     }
 
-    fun getLogsDir(): File = logsDir
+    fun getLogsDir(): File = logsDirectory
 
     fun clearSession() {
         written.clear()
-        // keep files, just allow re-write of same in new session if desired
     }
 }
